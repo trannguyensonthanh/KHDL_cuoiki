@@ -1,0 +1,21 @@
+# --- Xử lý dữ liệu & Toán học ---
+numpy
+pandas
+scikit-learn
+
+# --- Thư viện AI & Machine Learning ---
+torch
+scikit-surprise
+
+# --- Thư viện Backend API ---
+fastapi
+uvicorn
+pydantic
+python-multipart
+
+# --- Thư viện Google Gemini (Mới nhất) ---
+google-genai
+
+# --- Thư viện Vẽ biểu đồ (Cho file explore_.py) ---
+matplotlib
+seaborn

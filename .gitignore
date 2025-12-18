@@ -1,0 +1,39 @@
+# --- Secrets & Config (QUAN TRỌNG) ---
+config.py
+.env
+
+# --- Python Standard ---
+__pycache__/
+*.py[cod]
+*$py.class
+
+# --- Virtual Environment ---
+venv/
+env/
+.venv/
+
+# --- Project Specific (Model & Checkpoints) ---
+checkpoints/
+*.pkl
+*.pth
+*.h5
+
+# --- Logs & Runtime Data ---
+user_interactions_log.csv
+*.log
+
+# --- Frontend (NodeJS/Vite) ---
+node_modules/
+dist/
+build/
+coverage/
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# --- IDE & OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
