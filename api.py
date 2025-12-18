@@ -192,115 +192,93 @@ def map_car_to_frontend(row, match_score=0):
 
 def llm_rerank_and_explain(user_msg, user_profile, car_list):
     """
-    💎 ULTRA-PREMIUM LLM RERANKER
+    💎 AI CONSULTANT (LỜI GIẢI THÍCH THÔNG MINH)
     Chức năng:
-    1. Phân tích sâu tâm lý người dùng (Psychological Profiling).
-    2. So khớp đa chiều (Multidimensional Matching): Giá, Tech, Brand, Nhu cầu ngầm.
-    3. Chọn ra 3 xe tốt nhất ("Golden Trio").
-    4. Viết lời tư vấn bán hàng thuyết phục (Persuasive Copywriting).
+    1. Nhận vào Top 3 xe tốt nhất từ Engine (đã được sắp xếp theo điểm).
+    2. Phân tích tâm lý người dùng (Psychological Profiling).
+    3. Viết lời tư vấn bán hàng thuyết phục (Persuasive Copywriting) cho 3 xe này.
     """
     
-    # 1. CHUẨN BỊ DỮ LIỆU ĐẦU VÀO GIÀU NGỮ CẢNH (RICH CONTEXT)
+    # 1. CHUẨN BỊ DỮ LIỆU (Chỉ mô tả 3 xe được truyền vào)
     cars_context = ""
     for i, car in enumerate(car_list):
-        # Lấy tối đa 5 tính năng nổi bật để tránh quá tải token
+        # Lấy tối đa 5 tính năng
         feats = ", ".join(car.get('features', [])[:5]) if car.get('features') else "Cơ bản"
         specs = car.get('specs', {})
         
         cars_context += (
-            f"--- CAR ID: {i} ---\n"
-            f"Model: {car['name']} ({car['year']}) | Hãng: {car['brand']}\n"
-            f"Giá: {car['price']:,} VNĐ | ODO/Mới: {specs.get('fuelConsumption', 'N/A')}\n"
-            f"Thông số: {car['seats']} chỗ, {car['transmission']}, {car['fuelType']}, {specs.get('horsepower', 0)}HP\n"
-            f"Tính năng: {feats}\n"
+            f"--- ỨNG VIÊN SỐ {i+1}: {car['name']} ---\n"
+            f"- Thông số: {car['year']}, {car['brand']}, {car['seats']} chỗ, {car['transmission']}\n"
+            f"- Giá: {car['price']:,} VNĐ\n"
+            f"- Điểm phù hợp hệ thống chấm: {car.get('matchScore', 0)}/100\n"
+            f"- Lý do kỹ thuật: {car.get('matchReason', '')}\n"
+            f"- Tính năng: {feats}\n\n"
         )
 
-    # 2. XÂY DỰNG PROMPT KỸ THUẬT CAO (CHAIN-OF-THOUGHT PROMPT)
-    # Xác định giọng điệu dựa trên profile (Dynamic Persona Adaptation)
+    # 2. XÂY DỰNG PROMPT (Giữ nguyên phần Persona xịn xò)
     tone_instruction = "Chuyên nghiệp, tin cậy và khách quan."
     if user_profile.income > 25000000 or user_profile.age > 45:
         tone_instruction = "Sang trọng, lịch thiệp, tôn trọng đẳng cấp khách hàng (gọi là 'quý khách')."
     elif user_profile.age < 30:
-        tone_instruction = "Trẻ trung, năng động, tập trung vào công nghệ và tốc độ."
+        tone_instruction = "Trẻ trung, năng động, tập trung vào công nghệ, tốc độ và sự sành điệu."
     elif user_profile.purpose == "family":
-        tone_instruction = "Ấm áp, quan tâm, nhấn mạnh sự an toàn và tiện nghi cho gia đình."
+        tone_instruction = "Ấm áp, quan tâm, nhấn mạnh sự an toàn, rộng rãi và tiện nghi cho gia đình."
 
     prompt = f"""
     [VAI TRÒ]
-    Bạn là một chuyên gia tư vấn xe hơi cao cấp (AI Concierge) với 20 năm kinh nghiệm. 
-    Nhiệm vụ của bạn là chọn ra chính xác 3 chiếc xe phù hợp nhất cho khách hàng từ danh sách ứng viên và thuyết phục họ.
+    Bạn là một chuyên gia tư vấn xe hơi cao cấp (AI Concierge) với 20 năm kinh nghiệm.
+    
+    [NHIỆM VỤ]
+    Hệ thống tính toán kỹ thuật đã lọc ra 3 chiếc xe phù hợp nhất bên dưới.
+    Nhiệm vụ của bạn KHÔNG PHẢI LÀ CHỌN LẠI, mà là viết một đoạn lời thoại tư vấn thật hay để giới thiệu 3 chiếc xe này tới khách hàng.
 
     [HỒ SƠ KHÁCH HÀNG]
     - Tuổi: {user_profile.age} | Thu nhập: {user_profile.income} USD/năm
     - Tình trạng hôn nhân: {user_profile.maritalStatus} | Mục đích: {user_profile.purpose}
-    - Câu hỏi/Nhu cầu hiện tại: "{user_msg}"
+    - Câu hỏi/Nhu cầu: "{user_msg}"
 
-    [DANH SÁCH ỨNG VIÊN]
+    [DANH SÁCH 3 XE TỐT NHẤT]
     {cars_context}
 
-    [QUY TRÌNH TƯ DUY - CHAIN OF THOUGHT]
-    1. Phân tích ý định ngầm (Intent Detection): Khách quan tâm giá rẻ, sĩ diện, an toàn hay cảm giác lái?
-    2. Lọc kỹ thuật: Loại bỏ xe quá ngân sách hoặc sai nhu cầu (ví dụ hỏi xe 7 chỗ mà list có xe 4 chỗ).
-    3. Chọn lọc: Chọn 3 xe tốt nhất (Best Value, Best Fit, Best Experience).
-    4. Soạn thảo lời thoại: Viết lời khuyên ngắn gọn nhưng "chạm" vào tử huyệt cảm xúc của khách.
+    [YÊU CẦU NỘI DUNG]
+    1. Mở đầu: Chào hỏi theo giọng điệu {tone_instruction}.
+    2. Phân tích nhanh: Nhắc khéo tại sao các xe này lại hợp với nhu cầu (ví dụ: "Vì anh cần xe gia đình an toàn nên tôi chọn...").
+    3. Điểm nhấn: Nêu bật 1 ưu điểm "đắt giá" nhất của xe đứng đầu (Ứng viên số 1).
+    4. Kết thúc: Mời khách xem chi tiết bên dưới.
+    5. Độ dài: Ngắn gọn, súc tích (dưới 80 từ).
 
     [YÊU CẦU ĐẦU RA]
-    Trả về định dạng JSON chuẩn (RFC 8259), không có Markdown, không giải thích ngoài JSON:
+    Trả về định dạng JSON chuẩn (RFC 8259), KHÔNG Markdown:
     {{
-        "selected_indices": [index_xe_1, index_xe_2, index_xe_3],
-        "analysis": "Lời tư vấn dưới 70 từ. Xưng 'tôi'. {tone_instruction} Hãy nhắc khéo đến tính năng cụ thể của xe được chọn để tăng tính thuyết phục."
+        "analysis": "Lời tư vấn của bạn ở đây..."
     }}
     """
 
-    # 3. GỌI API GEMINI VỚI CẤU HÌNH TỐI ƯU
+    # 3. GỌI API GEMINI
     try:
-        # Sử dụng model thông minh nhất bạn có quyền truy cập (Ưu tiên Flash hoặc Pro 1.5)
-        # Nếu đang dùng genai SDK mới:
         response = gemini_client.models.generate_content(
-            model="gemini-2.5-flash", # Hoặc "gemini-2.5-flash" nếu bạn bị giới hạn
+            model="gemini-2.5-flash", # Hoặc gemma-3-4b-it tùy bạn
             contents=prompt,
             config=types.GenerateContentConfig(
-                temperature=0.4, # Giảm nhiệt độ để logic chính xác hơn
-                top_p=0.8,
+                temperature=0.7, # Tăng nhiệt độ chút để văn phong tự nhiên hơn
+                top_p=0.9,
             )
         )
         
         raw_text = response.text.strip()
         
-        # 4. XỬ LÝ LỖI PARSING JSON MẠNH MẼ (ROBUST PARSING)
-        # Tìm chuỗi JSON hợp lệ giữa dấu { và } cuối cùng
+        # 4. PARSING JSON
         json_match = re.search(r'\{.*\}', raw_text, re.DOTALL)
         if json_match:
-            json_str = json_match.group(0)
-            result = json.loads(json_str)
-            
-            # Validation: Đảm bảo trả về đủ 3 chỉ số (hoặc ít hơn nếu list gốc ít xe)
-            indices = result.get("selected_indices", [])
-            valid_indices = [i for i in indices if isinstance(i, int) and 0 <= i < len(car_list)]
-            
-            # Nếu LLM trả về rỗng hoặc sai index, fallback lấy 3 xe đầu
-            if not valid_indices:
-                valid_indices = [0, 1, 2][:len(car_list)]
-            
-            # Cập nhật lại kết quả đã validate
-            result["selected_indices"] = valid_indices
-            print(f"✅ [LLM Rerank] Selected: {valid_indices} | Reason: {result.get('analysis')[:50]}...")
+            result = json.loads(json_match.group(0))
             return result
         else:
-            raise ValueError("No JSON found in LLM response")
+            # Fallback nếu AI không trả JSON
+            return {"analysis": raw_text}
 
     except Exception as e:
-        print(f"⚠️ [Rerank Error] Lỗi xử lý AI: {e}")
-        print(f"   -> Raw response: {locals().get('raw_text', 'N/A')}")
-        
-        # 5. FALLBACK THÔNG MINH (RULE-BASED FALLBACK)
-        # Nếu AI tạch, dùng logic Python để chọn xe tốt nhất thay vì random
-        # Ví dụ: Sắp xếp theo matchScore có sẵn
-        sorted_indices = sorted(range(len(car_list)), key=lambda k: car_list[k].get('matchScore', 0), reverse=True)
-        return {
-            "selected_indices": sorted_indices[:3],
-            "analysis": f"Hệ thống AI đang bận, nhưng dựa trên dữ liệu kỹ thuật, đây là 3 lựa chọn khớp nhất với nhu cầu '{user_profile.purpose}' của bạn."
-        }
+        print(f"⚠️ [AI Explain Error] {e}")
+        return {"analysis": "Dưới đây là những lựa chọn tốt nhất được hệ thống tổng hợp dựa trên nhu cầu của bạn."}
     
 def analyze_user_intent(message: str):
     """
@@ -317,7 +295,9 @@ def analyze_user_intent(message: str):
     Nhiệm vụ: Phân tích câu chat của khách hàng và trích xuất dữ liệu có cấu trúc (JSON).
 
     Câu chat: "{message}"
-
+    [QUY TẮC ƯU TIÊN QUAN TRỌNG]
+    - Nếu người dùng đưa ra yêu cầu cụ thể trong câu chat (ví dụ: "tìm xe Honda"), đây là **HARD CONSTRAINT**.
+    - Các thông tin cũ (như user thích Toyota trong quá khứ) phải bị ghi đè bởi yêu cầu hiện tại.
     [QUY TẮC TRÍCH XUẤT]
     1. **Intent (Ý định):**
        - "search": Tìm mua xe, hỏi giá, hỏi thông tin xe cụ thể.
@@ -341,6 +321,9 @@ def analyze_user_intent(message: str):
        - **Features (Tính năng):** Trích xuất list các từ khóa: ["sunroof" (cửa sổ trời), "360_camera" (cam 360), "leather" (ghế da), "adas" (an toàn/sensing), "smartkey"].
        - **Performance (Hiệu suất):** Nếu user dùng từ "mạnh mẽ", "bốc", "thể thao", "đạp sướng" -> set "high_performance": true.
        - **Condition (Tình trạng):** "xe lướt", "mới cứng" -> "like_new"; "xe cũ", "giá rẻ" -> "used".
+       - **Strictness (Độ khắt khe):** 
+         - Nếu user dùng từ: "chỉ mua", "bắt buộc", "phải là" -> set "strict_mode": true.
+         - Nếu user nói: "gợi ý", "tham khảo", "tầm tầm" -> set "strict_mode": false.
     3. **Brands:** Trích xuất tên hãng (Toyota, Mazda, Mercedes...) -> lowercase.
 
     [YÊU CẦU ĐẦU RA]
@@ -360,7 +343,8 @@ def analyze_user_intent(message: str):
             "min_seats": 0,
             "features": ["sunroof", "adas"],  
             "high_performance": true,         
-            "car_condition": "like_new"       
+            "car_condition": "like_new",
+            "strict_mode": false       
         }},
         "user_context": {{
             "usage": "family", 
@@ -446,148 +430,124 @@ def is_text_similar(a: str, b: str, threshold=0.7):
 
 def apply_smart_filters(candidates_df, user_profile: UserProfileReq, intent_data: dict):
     """
-    Bộ lọc hậu kỳ "Gatekeeper": Đảm bảo xe trả về phải cực kỳ sát với nhu cầu.
-    Nâng cấp: Fuzzy matching, Price tolerance, Deep specs checking.
+    🧠 CONTEXT-AWARE SOFT FILTERING
+    Nguyên tắc: 
+    1. Chat Context > User Profile (Lời nói hiện tại quan trọng nhất).
+    2. Soft Penalty: Không xóa xe, chỉ trừ điểm nếu không khớp.
+    3. Fallback: Nếu trừ điểm quá tay khiến list rỗng, trả về xe điểm cao nhất dù thấp.
     """
-    filtered_cars_json = []
+    scored_candidates = []
     
-    # 1. Thu thập Context từ Chat (Quan trọng nhất)
-    mentioned_brands = [b.lower() for b in intent_data.get("mentioned_brands", [])]
-    extracted_filters = intent_data.get("filters", {}) or {} # Các filter LLM trích xuất (năm, chỗ, nhiên liệu...)
+    # 1. Lấy dữ liệu Context (Ưu tiên cao nhất)
+    chat_brands = [b.lower() for b in intent_data.get("mentioned_brands", [])]
+    extracted_filters = intent_data.get("filters", {}) or {}
+    
+    # Check chế độ khắt khe (do AI phán đoán)
+    is_strict = extracted_filters.get("strict_mode", False)
     
     for _, row in candidates_df.iterrows():
-        # Lấy điểm gốc từ Engine
-        base_score = row.get('match_percent', 85)
+        # Lấy điểm gốc từ Engine (đã tính toán vector tương đồng)
+        # Giả sử điểm gốc dao động 60-90
+        base_score = float(row.get('match_percent', 70))
+        current_score = base_score
+        
         car_obj = map_car_to_frontend(row, match_score=base_score)
+        car_brand = car_obj['brand'].lower()
+        car_price = car_obj['price']
         
-        is_valid = True
-        reject_reason = "" # Debug lý do loại bỏ (nếu cần log)
+        reasons = [] # Ghi lại lý do bị trừ điểm để debug hoặc giải thích
 
         # ---------------------------------------------------------
-        # A. LOGIC HÃNG XE (BRAND) - Có Fuzzy Matching
+        # A. LOGIC HÃNG XE (BRAND) - Priority: Chat > Profile
         # ---------------------------------------------------------
-        car_brand_clean = car_obj['brand'].lower()
-        
-        if mentioned_brands:
-            # Ưu tiên 1: User vừa nhắc tên hãng trong chat -> Bắt buộc phải đúng hãng đó
-            # Dùng fuzzy match: "mec" khớp "mercedes", "toyta" khớp "toyota"
+        if chat_brands:
+            # User ĐANG hỏi về hãng này -> Kiểm tra kỹ
             match_found = False
-            for brand in mentioned_brands:
-                if brand in car_brand_clean or is_text_similar(brand, car_brand_clean):
+            for brand in chat_brands:
+                if brand in car_brand or is_text_similar(brand, car_brand):
                     match_found = True
                     break
-            if not match_found:
-                is_valid = False
-                reject_reason = "Wrong Brand (Context)"
+            
+            if match_found:
+                current_score += 15 # Cộng điểm mạnh vì đúng ý user ngay lúc này
+            else:
+                # Sai hãng user đang hỏi
+                penalty = 60 if is_strict else 30 # Nếu user "chỉ mua Audi" -> trừ 60, còn "tham khảo" -> trừ 30
+                current_score -= penalty
+                reasons.append(f"Không phải hãng {chat_brands[0]}")
                 
-        elif user_profile.preferredBrands and len(user_profile.preferredBrands) > 0:
-            # Ưu tiên 2: Profile User (nếu không nhắc hãng trong chat)
-            match_found = False
-            for fav in user_profile.preferredBrands:
-                if fav.lower() in car_brand_clean:
-                    match_found = True
-                    break
-            if not match_found:
-                is_valid = False
-                reject_reason = "Wrong Brand (Profile)"
+        elif user_profile.preferredBrands:
+            # User KHÔNG nói hãng nào trong chat -> Dùng Profile (Ưu tiên thấp hơn)
+            if any(pb.lower() in car_brand for pb in user_profile.preferredBrands):
+                current_score += 5 # Cộng nhẹ
+            # Không trừ điểm nếu không khớp profile (để user khám phá hãng mới)
 
-    # [NEW] Logic Lọc Giá Thông Minh từ NLU
-    extracted_filters = intent_data.get("filters", {})
-    price_max = extracted_filters.get("price_max", 0)
-    price_min = extracted_filters.get("price_min", 0)
-
-    # Nếu NLU phát hiện ra giá trong chat -> Ghi đè lên Profile User
-    if price_max > 0:
-        # Logic: Giá xe phải nằm trong vùng user nói
-        # Cho phép dung sai 5%
-        if car_obj['price'] > price_max * 1.05 or car_obj['price'] < price_min * 0.95:
-            is_valid = False
-            reject_reason = "Price mismatch (Chat Context)"
-
-    # [NEW] Logic Body Type (Gầm cao/Thấp)
-    req_body_types = extracted_filters.get("body_type", []) # List ['suv', 'sedan'...]
-    if is_valid and req_body_types:
-        # Cần logic map từ CSV sang body type (Giả sử bạn đã có hàm classify_car_type ở engine)
-        # Ở đây so sánh string đơn giản
-        car_type_guess = "sedan" # Default
-        if car_obj['seats'] >= 7: car_type_guess = "mpv"
-        elif "suv" in car_obj['name'].lower(): car_type_guess = "suv"
+        # ---------------------------------------------------------
+        # B. LOGIC GIÁ TIỀN (PRICE) - Fuzzy Range
+        # ---------------------------------------------------------
+        # Ưu tiên giá trong chat (context) -> rồi mới tới profile
+        target_min = extracted_filters.get("price_min") or user_profile.priceRange[0]
+        target_max = extracted_filters.get("price_max") or user_profile.priceRange[1]
         
-        # Check if car matches any requested type
-        # (Phần này nên làm kỹ hơn ở Engine, nhưng lọc sơ ở đây cũng tốt)
-        pass 
-        # ---------------------------------------------------------
-        # B. LOGIC GIÁ TIỀN (PRICE) - Có Tolerance (Dung sai)
-        # ---------------------------------------------------------
-        # Nếu đang so sánh, bỏ qua giá để user thấy sự khác biệt
-        if is_valid and intent_data.get('intent') != 'compare':
-            if user_profile.priceRange and len(user_profile.priceRange) == 2:
-                min_p, max_p = user_profile.priceRange
-                car_price = car_obj['price']
+        # Nếu target_max = 0 hoặc quá lớn (vô lý), bỏ qua check max
+        if target_max > 100000000: # > 100tr mới check
+            if car_price > target_max:
+                # Tính độ lệch giá (Over-budget)
+                diff_percent = (car_price - target_max) / target_max
                 
-                # TOLERANCE 10%: Cho phép giá cao hơn ngân sách 10% nếu xe ngon
-                # Ví dụ: Tìm xe 1 tỷ, xe 1 tỷ 50tr vẫn chấp nhận
-                upper_limit = max_p * 1.1 if max_p > 0 else float('inf')
-                lower_limit = min_p * 0.9 # Thấp hơn 10% vẫn ok
-                
-                if max_p > 0 and not (lower_limit <= car_price <= upper_limit):
-                    is_valid = False
-                    reject_reason = "Price out of range"
+                if diff_percent < 0.1: # Lố < 10% (VD: Có 1 tỷ, xe 1 tỷ 1) -> OK
+                    current_score -= 5 
+                elif diff_percent < 0.3: # Lố < 30% -> Trừ vừa
+                    current_score -= 20
+                    reasons.append("Vượt ngân sách")
+                else: # Lố quá nhiều -> Trừ nặng
+                    current_score -= 50
+                    reasons.append("Giá quá cao")
+            
+            elif car_price < target_min * 0.8: # Rẻ hơn quá nhiều (VD: tìm xe sang mà gợi ý xe cỏ)
+                current_score -= 10 
+                reasons.append("Giá thấp hơn mong đợi")
 
         # ---------------------------------------------------------
-        # C. LOGIC KỸ THUẬT SÂU (DEEP SPECS CHECK) - Từ LLM trích xuất
+        # C. LOGIC NĂM & CÔNG NGHỆ (Technical Specs)
         # ---------------------------------------------------------
-        if is_valid and extracted_filters:
-            # 1. Năm sản xuất (Min Year)
-            if extracted_filters.get('min_year') and car_obj['year'] < extracted_filters['min_year']:
-                is_valid = False
-            
-            # 2. Nhiên liệu (Fuel Type)
-            if is_valid and extracted_filters.get('fuel_type'):
-                req_fuel = extracted_filters['fuel_type'].lower() # 'xăng', 'dầu', 'điện'
-                car_fuel = car_obj['fuelType'].lower()
-                
-                # Map tương đối: 'petrol' khớp 'xăng', 'diesel' khớp 'dầu'
-                fuel_map = {'petrol': 'xăng', 'diesel': 'dầu', 'electric': 'điện', 'ev': 'điện'}
-                req_fuel_norm = fuel_map.get(req_fuel, req_fuel)
-                
-                if req_fuel_norm not in car_fuel:
-                    is_valid = False
-
-            # 3. Số chỗ (Seats) - Ví dụ user chat "Tìm xe 7 chỗ"
-            # (Giả sử bạn đã update analyze_user_intent để trích xuất min_seats)
-            if is_valid and extracted_filters.get('min_seats'): 
-                 if car_obj['seats'] < extracted_filters['min_seats']:
-                     is_valid = False
+        req_min_year = extracted_filters.get("min_year")
+        if req_min_year and car_obj['year'] < req_min_year:
+            # Mỗi năm cũ hơn trừ 3 điểm
+            diff = req_min_year - car_obj['year']
+            current_score -= (diff * 3)
+            if diff > 5: reasons.append("Đời xe hơi sâu")
 
         # ---------------------------------------------------------
-        # D. LOGIC HỘP SỐ (TRANSMISSION)
+        # D. TỔNG KẾT & CHỐT
         # ---------------------------------------------------------
-        if is_valid and user_profile.transmission and user_profile.transmission != 'any':
-            req_trans = user_profile.transmission # 'manual' / 'automatic'
-            car_trans_str = str(car_obj['transmission']).lower()
-            
-            is_auto_car = 'tự động' in car_trans_str or 'at' in car_trans_str or 'cvt' in car_trans_str
-            
-            if req_trans == 'automatic' and not is_auto_car:
-                is_valid = False
-            elif req_trans == 'manual' and is_auto_car:
-                is_valid = False
+        # Clip điểm (0-100)
+        final_score = max(0, min(100, int(current_score)))
+        
+        car_obj['matchScore'] = final_score
+        # Nếu có lý do trừ điểm, update vào matchReason (để hiển thị UI nếu muốn)
+        if reasons:
+            car_obj['matchReason'] = f"Lưu ý: {', '.join(reasons)}"
+        
+        # Ngưỡng sàn: Chỉ lấy xe trên 40 điểm
+        if final_score >= 40:
+            scored_candidates.append(car_obj)
 
-        # ---------------------------------------------------------
-        # E. LOGIC TỪ KHÓA TÍNH NĂNG (KEYWORD MATCHING)
-        # ---------------------------------------------------------
-        # Nếu user chat "xe có cửa sổ trời", kiểm tra trong features
-        if is_valid and 'search_query' in intent_data: 
-            # (Lưu ý: Bạn cần pass nguyên câu query vào intent_data hoặc lấy từ req)
-            pass 
-            # Phần này thường Engine đã làm ở bước Retrieval, 
-            # ở đây ta chỉ lọc nếu muốn cực kỳ nghiêm ngặt.
-            
-        if is_valid:
-            filtered_cars_json.append(car_obj)
-            
-    return filtered_cars_json
+    # Sắp xếp giảm dần theo điểm
+    scored_candidates.sort(key=lambda x: x['matchScore'], reverse=True)
+    
+    # --- FALLBACK THÔNG MINH ---
+    # Nếu lọc xong mà rỗng (do trừ điểm quá tay), trả về top 3 xe có điểm cao nhất trong đám bị loại
+    # Để tránh việc trả về rỗng hoàn toàn
+    if not scored_candidates and candidates_df is not None and len(candidates_df) > 0:
+        print("⚠️ Soft filter quá gắt, kích hoạt Rescue Mode.")
+        # Lấy lại tất cả, sort và trả về top 3
+        backup_list = []
+        for _, row in candidates_df.iterrows():
+            backup_list.append(map_car_to_frontend(row, match_score=40))
+        return backup_list[:3]
+
+    return scored_candidates
 
 # ==============================================================================
 # 4. API ENDPOINTS
@@ -652,11 +612,7 @@ async def chat_endpoint(req: ChatRequest):
         "age": age,
         "salary": income,
         "is_married": 1 if marital == 'married' else 0,
-        # Các trường này giúp Engine (nếu được nâng cấp) lọc tốt hơn
         "is_rich": True if income >= 50000000 else False,
-        # --- [BỔ SUNG] TRUYỀN LỊCH SỬ LIKE VÀO ENGINE ---
-        # Lấy session ID hoặc User ID từ request (giả sử req.sessionId hoặc req.userProfile.userId)
-        # Ở đây mình dùng logic user_interactions global dict đã có sẵn trong api.py
         "liked_history": user_interactions.get(req.sessionId, [])
     }
     # 4.2. Merge thêm các bộ lọc sâu từ LLM (Năm, Máy, Odo...)
@@ -670,11 +626,7 @@ async def chat_endpoint(req: ChatRequest):
     if extracted_filters:
         # Chỉ lấy các giá trị không null
         clean_filters = {k: v for k, v in extracted_filters.items() if v is not None}
-        
-        # Map price_max từ NLU sang priceRange của Engine nếu có
-        # Engine dùng 'price_code' hoặc lọc thủ công, nhưng ta có thể pass tham số để Engine xử lý
         if clean_filters.get('price_max'):
-             # Ghi đè logic giá của Engine nếu user nói rõ ngân sách
              backend_profile["max_price_override"] = clean_filters['price_max']
              
         backend_profile.update(clean_filters)
@@ -689,41 +641,33 @@ async def chat_endpoint(req: ChatRequest):
             "cars": []
         }
 
-    # # 4. ÁP DỤNG SMART FILTER (POST-PROCESSING)
-    # # Bước này lọc lại theo Giá tiền, Hãng (ưu tiên Chat > Profile)
-    # filtered_cars = apply_smart_filters(candidates_df, req.userProfile, intent_data)
-    filtered_cars = []
+    # 4. ÁP DỤNG SMART FILTER (POST-PROCESSING)
+    # Bước này lọc lại theo Giá tiền, Hãng (ưu tiên Chat > Profile)
+    filtered_cars = apply_smart_filters(candidates_df, req.userProfile, intent_data)
+    # filtered_cars = []
     
-    # Duyệt qua kết quả từ Engine
-    for _, row in candidates_df.iterrows():
-        # Lấy điểm số mà Engine đã tính (bao gồm cả điểm cộng cho hãng/giá nếu có)
-        score = row.get('match_percent', 85)
+    # # Duyệt qua kết quả từ Engine
+    # for _, row in candidates_df.iterrows():
+    #     # Lấy điểm số mà Engine đã tính (bao gồm cả điểm cộng cho hãng/giá nếu có)
+    #     score = row.get('match_percent', 85)
         
-        # Chuyển đổi sang format JSON cho Frontend
-        car_obj = map_car_to_frontend(row, match_score=score)
+    #     # Chuyển đổi sang format JSON cho Frontend
+    #     car_obj = map_car_to_frontend(row, match_score=score)
         
-        # Nếu muốn, bạn có thể cập nhật matchReason cơ bản ở đây
-        if intent_data.get("mentioned_brands"):
-             # Nếu user hỏi hãng, và xe này đúng hãng -> note lại
-             requested_brands = [b.lower() for b in intent_data["mentioned_brands"]]
-             if car_obj['brand'].lower() in requested_brands:
-                 car_obj['matchReason'] = "Đúng thương hiệu bạn tìm"
+    #     # Nếu muốn, bạn có thể cập nhật matchReason cơ bản ở đây
+    #     if intent_data.get("mentioned_brands"):
+    #          # Nếu user hỏi hãng, và xe này đúng hãng -> note lại
+    #          requested_brands = [b.lower() for b in intent_data["mentioned_brands"]]
+    #          if car_obj['brand'].lower() in requested_brands:
+    #              car_obj['matchReason'] = "Đúng thương hiệu bạn tìm"
         
-        filtered_cars.append(car_obj)
+    #     filtered_cars.append(car_obj)
 
-    print(f"🚀 [Pipeline] Engine trả về {len(filtered_cars)} xe -> Chuyển thẳng cho LLM Rerank.")
+    # print(f"🚀 [Pipeline] Engine trả về {len(filtered_cars)} xe -> Chuyển thẳng cho LLM Rerank.")
     
     final_cars = []
     final_content = ""
     message_prefix = ""
-
-    # 5. XỬ LÝ FALLBACK (Nếu lọc xong hết sạch xe)
-    if not filtered_cars:
-        print("⚠️ Filter quá chặt. Dùng Fallback (Top Trending).")
-        # Lấy random 3 xe từ kho làm gợi ý
-        fallback_df = recsys.df_cars.sample(3) 
-        filtered_cars = [map_car_to_frontend(row, match_score=75) for _, row in fallback_df.iterrows()]
-        message_prefix = "Không tìm thấy xe khớp hoàn toàn yêu cầu của bạn, nhưng bạn có thể tham khảo các mẫu xe này: "
 
     # 6. RERANKING & RESPONSE GENERATION (Chia nhánh Search vs Compare)
     
@@ -744,20 +688,27 @@ async def chat_endpoint(req: ChatRequest):
 
     # NHÁNH B: TÌM KIẾM (SEARCH) - Mặc định
     else:
-        # Dùng LLM chọn ra 3 xe tốt nhất (Rerank)
-        # Lưu ý: Hàm llm_rerank (hoặc llm_rerank_and_explain) phải được định nghĩa ở trên
-        rerank_result = llm_rerank_and_explain(req.message, req.userProfile, filtered_cars)
+        # --- BƯỚC 1: SYSTEM SELECTION (Hệ thống tự chọn) ---
+        # Sắp xếp danh sách xe từ Engine theo điểm số matchScore (cao -> thấp)
+        # filtered_cars là danh sách 50 xe từ Engine trả về
+        filtered_cars.sort(key=lambda x: x['matchScore'], reverse=True)
         
-        selected_indices = rerank_result.get("selected_indices", [0, 1, 2])
-        for idx in selected_indices:
-            if idx < len(filtered_cars):
-                final_cars.append(filtered_cars[idx])
+        # Cắt lấy Top 3 xe xuất sắc nhất
+        final_cars = filtered_cars[:3]
         
-        # Fallback nếu LLM lỗi
+        # Nếu không có xe nào (Fallback)
         if not final_cars:
-            final_cars = filtered_cars[:3]
-            
-        final_content = message_prefix + rerank_result.get("analysis", "Đây là những lựa chọn tốt nhất cho bạn.")
+            print("⚠️ Filter quá chặt. Dùng Fallback.")
+            fallback_df = recsys.df_cars.sample(3) 
+            final_cars = [map_car_to_frontend(row, match_score=60) for _, row in fallback_df.iterrows()]
+            message_prefix = "Hiện chưa tìm thấy xe chính xác theo yêu cầu, nhưng bạn có thể tham khảo: "
+
+        # --- BƯỚC 2: AI EXPLANATION ---
+        # Chỉ gọi AI để viết lời thoại cho 3 xe đã chốt
+        ai_response = llm_rerank_and_explain(req.message, req.userProfile, final_cars)
+        
+        # Ghép lời thoại
+        final_content = message_prefix + ai_response.get("analysis", "Đây là các gợi ý phù hợp nhất.")
 
     # 7. TRẢ KẾT QUẢ
     return {
@@ -792,16 +743,38 @@ async def feedback_endpoint(req: FeedbackRequest, background_tasks: BackgroundTa
     }
 
 @app.get("/api/similar/{car_id}")
-def similar_cars_endpoint(car_id: int):
+def similar_cars_endpoint(car_id: str): # Đổi thành str để nhận mọi loại ID
     """
-    Endpoint Item-Item CF (Kiến thức Slide)
-    Khi user bấm vào xem chi tiết 1 xe -> Gọi API này để lấy xe tương tự
+    Endpoint lấy xe tương tự (Hybrid Approach).
+    Kết hợp sức mạnh của Matrix Factorization và Content Filtering.
     """
-    similar_df = recsys.get_similar_cars_item_based(car_id, top_k=3)
-    cars = []
-    for _, row in similar_df.iterrows():
-        cars.append(map_car_to_frontend(row, match_score=0.85)) # Score giả định cao
-    return cars
+    try:
+        # Gọi hàm Hybrid mới
+        similar_df = recsys.get_similar_cars_item_based(car_id, top_k=4)
+        
+        cars = []
+        for _, row in similar_df.iterrows():
+            # Xe từ CF thường có độ tin cậy cao hơn Content
+            score = 90 if 'sim_score' not in row else int(row['sim_score']) # sim_score từ content-based logic
+            
+            # Clip score
+            score = max(70, min(99, score))
+            
+            mapped_car = map_car_to_frontend(row, match_score=score)
+            
+            # Cập nhật lý do
+            if 'sim_score' in row:
+                mapped_car['matchReason'] = "Tương đồng về thông số kỹ thuật & tầm giá"
+            else:
+                mapped_car['matchReason'] = "Được nhiều người cùng sở thích quan tâm"
+                
+            cars.append(mapped_car)
+            
+        return cars
+        
+    except Exception as e:
+        print(f"❌ Error getting similar cars: {e}")
+        return []
 
 @app.get("/api/cars")
 def get_all_cars_endpoint():

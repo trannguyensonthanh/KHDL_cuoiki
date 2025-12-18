@@ -563,10 +563,6 @@ class CarRecommendationSystem:
                 # Gộp vào df_ratings hiện tại (chỉ trong RAM, chưa lưu đè file gốc để tránh lỗi)
                 self.df_ratings = pd.concat([self.df_ratings, df_feedback], ignore_index=True)
                 
-                # Cập nhật lại Encoder nếu có user mới
-                # (Lưu ý: Trong thực tế cần xử lý incremental learning, ở đây ta gộp đơn giản)
-                # Nếu user mới chưa có trong Encoder cũ thì sẽ bị bỏ qua ở bước Train sau, 
-                # nhưng vẫn dùng được cho bước Real-time Boosting.
                 
             except Exception as e:
                 print(f"⚠️ Lỗi đọc feedback log: {e}")
@@ -605,7 +601,7 @@ class CarRecommendationSystem:
         self.svd.fit(trainset)
         dump.dump(path_svd, algo=self.svd)
 
-        # --- TRAIN TWO TOWER NÂNG CẤP ---
+        # --- TRAIN TWO TOWER ---
         print("   -> Training Advanced Two-Tower Neural Network...")
         
         # Khởi tạo model với đầy đủ tham số kích thước
@@ -619,9 +615,6 @@ class CarRecommendationSystem:
         # User Input: [u_idx, p_idx]
         user_feats = self.train_df[['u_idx', 'p_idx']].values
         
-        # Item Input: [i_idx, b_idx, t_idx, price, year, power, seats, tech]
-        # Lưu ý: i_idx phải dùng từ bảng ratings đã merge, không dùng trực tiếp từ df_cars để đảm bảo đúng hàng
-        # Ta cần map car_id trong ratings sang index của encoder
         self.train_df['i_idx_mapped'] = self.i_enc.transform(self.train_df['car_id'])
         
         item_cols = ['i_idx_mapped', 'b_idx', 't_idx', 'norm_price', 'norm_year', 'norm_power', 'norm_seats', 'norm_tech']
@@ -718,7 +711,7 @@ class CarRecommendationSystem:
         # Lấy mẫu ngẫu nhiên
         test_set = self.df_ratings.sample(frac=0.2, random_state=42)
 
-        # [QUAN TRỌNG] Merge thêm thông tin xe (Brand, Type, Specs...) vào test_set
+        # Merge thêm thông tin xe (Brand, Type, Specs...) vào test_set
         # Để có đủ dữ liệu đầu vào cho Item Tower
         cols_to_merge = ['id', 'b_idx', 't_idx', 'norm_price', 'norm_year', 'norm_power', 'norm_seats', 'norm_tech']
         test_set = pd.merge(test_set, self.df_cars[cols_to_merge], left_on='car_id', right_on='id', how='left')
@@ -955,7 +948,7 @@ class CarRecommendationSystem:
             print("   ⚠️ Cảnh báo: Đã lọc bỏ hơn 90% dữ liệu, kết quả có thể bị hạn chế.")
 
         # ----------------------------------------------------------------------
-        # [BỔ SUNG] E. FEATURE MATCHING (Lọc mềm bằng từ khóa)
+        # E. FEATURE MATCHING (Lọc mềm bằng từ khóa)
         # ----------------------------------------------------------------------
         # Nếu user yêu cầu tính năng cụ thể (VD: Cửa sổ trời), ta ưu tiên lọc.
         # Nhưng nếu lọc xong còn quá ít xe (<3), ta sẽ bỏ qua bước này (Fallback).
@@ -964,7 +957,6 @@ class CarRecommendationSystem:
         if req_features:
             temp_df = filtered_df.copy()
             # Map từ khóa AI trả về sang cột dữ liệu (đã tạo ở bước clean data)
-            # Lưu ý: Cần đảm bảo df_cars đã có các cột này từ hàm process()
             feature_map = {
                 'sunroof': 'has_sunroof',
                 'adas': 'has_adas',
@@ -1039,8 +1031,6 @@ class CarRecommendationSystem:
         
         self.torch_model.eval()
         with torch.no_grad():
-            # Code cũ: cosine_similarity(...)
-            # Code mới: Phải gọi qua model để lấy vector cuối cùng
             
             # Forward user part
             u_vec = self.torch_model.user_emb(u_input[:, 0].long())
@@ -1060,7 +1050,7 @@ class CarRecommendationSystem:
             # Tính Dot Product -> Predicted Rating
             dl_ratings = (user_rep * item_rep).sum(dim=1).cpu().numpy()
 
-        # [BỔ SUNG] Lấy danh sách xe user đã Like trong phiên này - feedback
+        # Lấy danh sách xe user đã Like trong phiên này - feedback
         liked_car_ids = profile_dict.get('liked_history', [])
 
         # 4. Tổng hợp kết quả
@@ -1107,7 +1097,7 @@ class CarRecommendationSystem:
                 if str(car_info['make']).lower() in fav_brands:
                     match_percent += 10
                     final_rating += 0.5
-            # --- [BỔ SUNG] REAL-TIME FEEDBACK BOOSTING ---
+            # --- REAL-TIME FEEDBACK BOOSTING ---
             # Nếu xe này tương đồng với xe user vừa Like -> Cộng điểm cực mạnh
             if liked_car_ids:
                 # Kiểm tra xem xe hiện tại (car_id) có giống xe đã like không
@@ -1143,26 +1133,112 @@ class CarRecommendationSystem:
         # Merge lại để lấy full thông tin xe
         final_df = pd.merge(res_df, self.df_cars, on='id')
         return final_df
+    def _get_content_based_similar_cars(self, car_id, top_k=5):
+        """
+        FALLBACK: Tìm xe tương tự dựa trên thông số kỹ thuật (dùng khi chưa có rating).
+        Logic: Cùng phân khúc (Body Type) -> Cùng tầm giá -> Cùng hãng (ưu tiên).
+        """
+        # 1. Lấy thông tin xe gốc
+        try:
+            # Đảm bảo ID là string để so sánh
+            car_id = str(car_id)
+            target_car = self.df_cars[self.df_cars['id'] == car_id].iloc[0]
+        except IndexError:
+            return pd.DataFrame() # Xe không tồn tại trong kho
+
+        # 2. Lọc xe cùng kiểu dáng (Body Type)
+        # Giả sử đã có cột 'car_type' từ hàm process(), nếu chưa thì dùng logic đơn giản
+        target_type = target_car.get('car_type', '')
+        
+        # Lấy danh sách ứng viên (trừ chính nó)
+        candidates = self.df_cars[self.df_cars['id'] != car_id].copy()
+        
+        # Tính điểm tương đồng (Distance Metric)
+        # Công thức: 
+        # - Cùng Body Type: +40đ
+        # - Cùng Hãng: +20đ
+        # - Chênh lệch giá: Tối đa 40đ (càng gần càng cao)
+        
+        def calculate_similarity(row):
+            score = 0
+            
+            # 1. Body Type (Quan trọng nhất)
+            if row.get('car_type') == target_type:
+                score += 40
+            
+            # 2. Brand
+            if row['make'] == target_car['make']:
+                score += 20
+                
+            # 3. Price Similarity (Max 40 điểm)
+            # Tính % chênh lệch giá. Ví dụ lệch 0% -> 40đ, lệch 50% -> 0đ
+            try:
+                price_diff = abs(row['price'] - target_car['price'])
+                percent_diff = price_diff / (target_car['price'] + 1) # +1 tránh chia 0
+                price_score = max(0, 40 * (1 - percent_diff * 2)) # Lệch 50% là hết điểm
+                score += price_score
+            except:
+                pass
+                
+            # 4. Year Similarity (Bonus nhẹ)
+            year_diff = abs(row['year'] - target_car['year'])
+            if year_diff <= 2: score += 5
+            
+            return score
+
+        candidates['sim_score'] = candidates.apply(calculate_similarity, axis=1)
+        
+        # Lấy top K xe có điểm cao nhất
+        top_candidates = candidates.sort_values('sim_score', ascending=False).head(top_k)
+        
+        print(f"   ✨ [Content-Based] Tìm thấy {len(top_candidates)} xe tương tự theo thông số.")
+        return top_candidates
 
     def get_similar_cars_item_based(self, car_id, top_k=3):
         """
-        Ứng dụng kiến thức Slide (Item-Item CF)
-        Tìm các xe tương tự dựa trên lịch sử rating
+        HYBRID SIMILARITY:
+        1. Thử tìm bằng Item-Item CF (Hành vi người dùng - Chính xác nhất).
+        2. Nếu không có (xe mới), Fallback sang Content-Based (Thông số kỹ thuật).
         """
-        if car_id not in self.sim_car_ids:
-            return pd.DataFrame() # Xe mới chưa có rating
+        car_id = str(car_id)
+        print(f"\n🔍 Tìm xe tương tự cho xe ID: {car_id}")
+        
+        cf_results = pd.DataFrame()
+        
+        # --- CÁCH 1: COLLABORATIVE FILTERING (Ưu tiên) ---
+        if hasattr(self, 'sim_car_ids') and car_id in self.sim_car_ids:
+            try:
+                # Lấy index
+                idx = self.sim_car_ids.index(car_id)
+                # Lấy vector tương đồng
+                sim_scores = self.item_sim_matrix[idx]
+                # Sort lấy index cao nhất (trừ chính nó)
+                top_indices = sim_scores.argsort()[-(top_k+1):-1][::-1]
+                similar_ids = [self.sim_car_ids[i] for i in top_indices]
+                
+                cf_results = self.df_cars[self.df_cars['id'].isin(similar_ids)]
+                print(f"   ✅ [CF] Tìm thấy {len(cf_results)} xe dựa trên hành vi người dùng.")
+            except Exception as e:
+                print(f"   ⚠️ Lỗi CF: {e}")
+
+        # --- CÁCH 2: CONTENT-BASED (Fallback hoặc Bổ sung) ---
+        # Nếu CF không trả về đủ số lượng xe (ví dụ top_k=3 mà CF chỉ ra 0 hoặc 1 xe)
+        # Chúng ta sẽ tìm thêm bằng Content-Based để lấp đầy
+        if len(cf_results) < top_k:
+            needed = top_k - len(cf_results)
+            print(f"   ⚠️ CF chưa đủ (có {len(cf_results)}/{top_k}), tìm thêm bằng Content-Based...")
             
-        # Lấy index của xe trong ma trận similarity
-        idx = self.sim_car_ids.index(car_id)
-        
-        # Lấy dòng tương đồng của xe đó
-        sim_scores = self.item_sim_matrix[idx]
-        
-        # Sort lấy index cao nhất (trừ chính nó)
-        top_indices = sim_scores.argsort()[-(top_k+1):-1][::-1]
-        
-        similar_ids = [self.sim_car_ids[i] for i in top_indices]
-        return self.df_cars[self.df_cars['id'].isin(similar_ids)]
+            cb_results = self._get_content_based_similar_cars(car_id, top_k=needed + 5) # Lấy dư ra để lọc trùng
+            
+            # Loại bỏ xe đã có trong CF
+            if not cf_results.empty:
+                cb_results = cb_results[~cb_results['id'].isin(cf_results['id'])]
+            
+            # Gộp lại: CF lên đầu, Content-Based theo sau
+            final_results = pd.concat([cf_results, cb_results.head(needed)])
+            return final_results
+            
+        return cf_results
 
 # --- MAIN TEST ---
 if __name__ == "__main__":
